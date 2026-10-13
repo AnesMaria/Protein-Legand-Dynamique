@@ -1,128 +1,118 @@
-# Validation de l'extension SAE
+# Validation du projet dynamique
 
-Validation réalisée le 13 octobre 2026, sous Linux, Python 3.12, PyTorch 2.5.1 CPU,
-Transformers 4.48.3 et PennyLane 0.40.0. Dépendances identiques à la baseline :
-aucun paquet supplémentaire nécessaire. La validation de la baseline originale
-est archivée dans [VALIDATION_BASELINE.md](VALIDATION_BASELINE.md).
+Tests réalisés le 13 octobre 2026 sous Linux/Python 3.12, PyTorch 2.5.1 CPU,
+PennyLane 0.40.0, NumPy 1.26.4, h5py 3.12.1 et MDAnalysis 2.8.0.
+Les versions complètes sont dans `requirements-dynamic-cpu.lock`.
 
-## Ancien projet préservé
+## Sources et données réellement utilisées
 
-La copie a été créée dans `/workspace/Protein-Legand-Spase-Autoencoder` à partir
-du commit `305ea17f0a8509068fadd60ab633d26ccf39bc16`. Le checkout et le dépôt
-distant `AnesMaria/proteine-legand` sont conservés sans modification de code.
-Les données/caches utiles ont été copiés, pas reliés par des symlinks. Les
-chemins des graphes pointent vers leurs nouvelles copies.
+Les deux dépôts MISATO officiels ont été inspectés et leurs commits sont
+épinglés dans `examples/misato_kd_tiny/provenance.json`. L'exemple HDF5 contient
+20 complexes avec 100 frames chacun. La table d'affinité séparée a permis de
+conserver **12 complexes avec Kd positifs exacts**, en excluant Ki, IC50,
+censure et labels absents.
 
-Comparaison des trois CSV préparés : séquences, SMILES, identifiants et affinités
-identiques à l'ancien projet. Comparaison octet par octet : `datasets.py`,
-`quantum_layer.py`, `patch_encoder.py`, `patch_selection.py`, les encodeurs
-ESM/ChemBERTa, `pocket_data.py` et `engine.py` restent identiques à la baseline.
+Le dépôt contient leur petit sous-ensemble transformé : 8 frames ordonnées,
+64 atomes protéiques au maximum, tous les atomes lourds du ligand, indices
+atomiques originaux, provenance, checksums dérivés, attribution et licences
+sources. Il est directement utilisable sans télécharger les 133 GiB du dataset
+complet. Les timestamps physiques des snapshots ne sont pas disponibles dans
+ce HDF5 : les indices de frames sont utilisés et l'unité est explicitement
+`frame_index`.
+
+Pour 184L, le diagnostic des vraies coordonnées montre des changements :
+distance lourde minimale protéine–ligand environ 3.00–3.47 Å, nombre de contacts
+du crop à 4.5 Å entre 49 et 65, RMSD du crop protéique aligné jusqu'à environ
+1.23 Å. La figure et le CSV sont inclus dans le dossier d'exemple. Ce ne sont
+ni des coordonnées perturbées artificiellement ni des métriques d'affinité.
 
 ## Tests automatiques
 
-Suite finale : **31 tests réussis, zéro échec, zéro skip**. Neuf avertissements
-attendus signalent le fallback sans structure sur les tenseurs de test.
+**50 tests réussis, aucun échec et aucun skip.** Les 31 tests de la baseline
+statique/SAE sont conservés. Les ajouts vérifient notamment :
 
-Les 14 tests initiaux ont été conservés. Les nouveaux tests couvrent :
+- gradients dans le GNN, le GRU, le SAE et le circuit PennyLane pour les cinq
+  variantes principales ; checkpoint roundtrip ; batches/frames/réplicas ragged ;
+- sensibilité du GRU à l'ordre des frames et invariance du contrôle mean lorsque
+  la référence de patches est conservée ;
+- invariance spatiale du GNN par mouvement rigide et effet réel du déplacement
+  du ligand sur la prédiction ;
+- identité des ancres dans le temps et agrégation des réplicas par complexe ;
+- refus des structures statiques, temps non croissants, masks invalides,
+  mélanges d'endpoints et identités insuffisantes pour les splits froids ;
+- séparation des complexes/réplicas pour les quatre méthodes de split sur
+  des fixtures synthétiques **explicitement réservées aux tests** ;
+- contexte ESM/ChemBERTa avec de vrais petits backbones Transformers locaux ;
+- lecture native PDB+DCD, éléments atomiques explicites et correction PBC
+  sur une fixture d'I/O synthétique, sans la présenter comme une simulation MD réelle.
 
-- SAE L1 et Top-K : dimensions, pertes et gradients encoder/decoder.
-- Top-K : plafond de K activations, égalités déterministes, K invalide.
-- MLP classique et quantique : prédictions et attention comparées aux sorties
-  enregistrées depuis le véritable code du commit original.
-- Initialisation commune des patches, scoreurs et têtes entre les ablations.
-- Reconstruction/sparsité calculées uniquement sur les patches valides,
-  gradients vers le circuit et le SAE, batch à un seul exemple.
-- Projection identité quand la dimension du latent égale le nombre de qubits.
-- Moments streaming, exports NPZ alignés avec les IDs/paires/patches.
-- Refus des transferts entre seeds, splits ou lignes train différentes.
-- Agrégation : seed exclue de la signature, coefficients contrôlés,
-  refus de mélanger des losses différentes.
-- AE gelé : pas de gradients sur ses paramètres, mais gradients conservés
-  vers la projection et les patches quand ceux-ci restent entraînables.
+Les avertissements sont ceux des bibliothèques de plotting/MDAnalysis et des
+fixtures statiques sans structure ; aucune assertion n'a été désactivée pour
+obtenir ces résultats. Les tests synthétiques complètent les essais sur les
+vraies données ci-dessous et ne remplacent pas ces derniers.
 
-Les scripts d'optimisation synthétiques L1+Quantum, Top-K+Quantum et
-Dense AE+Quantum ont aussi terminé : baisse de loss, gradients et restauration
-des checkpoints vérifiés. Les tenseurs synthétiques ne sont pas des données
-scientifiques d'affinité.
+## Essais end-to-end sur MISATO réel
 
-## Essais avec les vrais encodeurs et pockets Davis
+Les sept variantes ont terminé deux epochs sur la seed 0 :
 
-Sous-ensemble de fonctionnement : 96 paires, 12 séquences courtes, 8 ligands,
-split random seedé : 58 train / 19 validation / 19 test. ESM-2, ChemBERTa et
-graphes C-alpha/P2Rank réels ont été utilisés, comme dans la baseline.
+| Variante | Agrégation temporelle | Statut |
+|---|---|---|
+| MLP + Classical | GRU | réussi |
+| MLP + Quantum | GRU | réussi |
+| SAE L1 + Classical | GRU | réussi |
+| SAE L1 + Quantum | GRU | réussi |
+| Dense AE + Quantum | GRU | réussi |
+| SAE Top-K + Classical | GRU | réussi |
+| SAE Top-K + Quantum | GRU | réussi |
 
-Le runner end-to-end a terminé les sept variantes sur seeds **0 et 1**, deux
-epochs par run : **14 runs**, plus les sept agrégations mean ± sample std.
-Ces premiers essais employaient `beta=1e-3` pour L1. Les paramètres entraînables
-mesurés dans ce protocole, backbones gelés :
+Les sept agrégations ont été produites ; avec une seule seed, la std reste
+indéfinie (`null`). Des runs SAE+Quantum avec `mean` et `first` ont aussi terminé.
+Les latents, attentions spatiales/temporelles, métriques, paramètres et timings
+ont été enregistrés. Top-K conserve au plus 8 activations sur 64, conformément
+au contrôle attendu.
 
-| Variante | Paramètres entraînables |
-|---|---:|
-| MLP + Classical | 282738 |
-| MLP + Quantum | 282742 |
-| SAE L1 + Classical | 348786 |
-| SAE L1 + Quantum | 348790 |
-| Dense AE + Quantum | 348790 |
-| SAE Top-K + Classical | 348786 |
-| SAE Top-K + Quantum | 348790 |
+Le pré-entraînement du SAE dynamique a terminé deux epochs en utilisant les
+groupes du train d'affinité uniquement, avec validation interne disjointe et
+encodeur spatial figé. Un modèle chargeant ce checkpoint, avec SAE et graphe
+gelés, a terminé l'entraînement d'affinité puis son évaluation après rechargement.
+L'évaluation du checkpoint SAE+Quantum joint reproduit les métriques calculées
+après entraînement. L'export et l'analyse par frame des latents ont réussi.
 
-Les AE incluent les paramètres du decoder dans ce compte ; les nombres ne
-constituent pas une égalisation de budget entre MLP et AE. Dense AE et SAE
-ont la même architecture/initialisation, ce qui contrôle l'effet de la sparsité.
+**Limite majeure : le split de l'exemple donne 10 train / 1 validation / 1 test.**
+Les corrélations et CI du test sont indéfinis. Les erreurs sur ce seul complexe
+ne permettent pas de comparer les méthodes, ni de montrer un avantage du
+quantique, du SAE ou du modèle temporel. Les timings des essais concurrents
+sont des diagnostics de fonctionnement, pas des benchmarks de vitesse.
 
-Pré-entraînement : L1 (3 epochs), Top-K et Dense AE (2 epochs) terminés sur les
-entrées du train uniquement. Une validation interne disjointe par séquence
-protéique a été vérifiée. Les trois pré-entraînements conservent exactement
-les mêmes poids de l'encodeur de patches en amont.
+## Corrections d'environnement
 
-Le runner `--protocol pretrained --include-topk` a aussi terminé ses **sept
-variantes seed 0**, avec des patches figés pour toutes les branches et
-`beta=1e-5`, dans une racine distincte. Les AE étaient fine-tunés.
-Un essai séparé avec SAE **et** patches gelés a vérifié le gel, la sauvegarde et
-la restauration des métriques. Les transferts pré-entraînés Top-K et Dense AE
-ont été vérifiés aussi individuellement.
+L'installation initiale de MDAnalysis seul avait sélectionné des dépendances
+graphiques récentes entraînant une mise à jour incompatible de NumPy.
+Les contraintes ont été restaurées : NumPy 1.26.4, Matplotlib 3.10.1 et
+ContourPy 1.3.2, puis installation de `requirements-md.txt` avec le verrou.
+`pip check` ne signale plus de conflit ; les tests et essais MD ont été relancés
+avec ces versions. TLS, signatures et checksums n'ont pas été désactivés.
 
-`evaluate.py` a reproduit les métriques du checkpoint SAE+Quantum joint après
-rechargement, avec export des latents. `analyze_latents.py` a produit les
-statistiques par dimension, neurones morts et histogrammes JSON pour L1 et
-Top-K. Les latents Top-K ont au plus 8 valeurs actives sur 64 ; dans ces essais
-le ratio observé était 0.125, conforme au ratio nominal.
+Les caches Hugging Face et Matplotlib utilisent des chemins accessibles en
+écriture. L'ancien code des deux dépôts précédents n'a pas été modifié.
 
-Un transfert volontaire d'un checkpoint random vers Cold-Both a été **refusé
-comme prévu**. Les splits et les lignes train doivent correspondre exactement.
+## Non vérifié ou restant à exécuter
 
-## Observation de collapse et choix initial du coefficient
+- Dataset MISATO complet et benchmarks sur cinq seeds ; cold-ligand/both de
+  l'exemple nécessite d'abord des identités chimiques précises des peptides.
+- Téléchargement/format natif du benchmark MDbind cité : non vérifiés ici.
+  Le dépôt homonyme de prédiction de sites n'a pas été confondu avec ce benchmark.
+  L'importeur générique requiert les véritables trajectoires, topologies et labels.
+- PLAS-20k complet : non téléchargé ni entraîné ; métadonnées temporelles et
+  séparation des réplicas nécessaires avant import, pas une concaténation
+  arbitraire de conformères.
+- ATLAS apo comme dataset d'affinité : non supporté sans ligand/labels réels.
+- Timestamps physiques de MISATO, préparation PBC de tous les complexes et
+  alignements résidu–atome : non inventés, à fournir/vérifier selon la source.
+- Voie CUDA et matériel quantique : non testés ; le circuit est simulé en CPU.
+- Recherche d'hyperparamètres et démonstration scientifique de l'hypothèse : à réaliser.
 
-La L1 est une norme **sommée sur les latents**, puis moyennée sur les patches.
-Avec `alpha=0.1`, `beta=1e-3`, le deuxième epoch du train de l'essai L1+Quantum
-seed 0 donnait seulement **0.84 latent actif sur 64** en moyenne et une variance
-latente très faible. Une simple fraction élevée de zéros aurait donc été une
-conclusion trompeuse.
-
-Un essai train avec `beta=1e-5` donnait environ **26.95 latents actifs sur 64** au
-deuxième epoch, avec variance conservée. Les branches classique et quantique
-ont toutes deux été vérifiées avec ce coefficient. La config initiale publiée
-emploie donc `beta=1e-5`, cohérent avec `alpha*lambda_sparse` pour `lambda=1e-4`.
-Ce choix repose sur les diagnostics du train, pas sur un gain de RMSE du test.
-Il ne remplace pas une recherche d'hyperparamètres et une surveillance des
-neurones morts sur les véritables expériences.
-
-## Résultats et limites
-
-Les logs, timings, checkpoints, NPZ et JSON détaillés sont conservés dans les
-dossiers ignorés `runs/` de la machine. Les scripts enregistrent les temps de
-train/inférence, mais ces petites mesures CPU et les exécutions concurrentes
-de validation ne conviennent pas à une comparaison de vitesse scientifique.
-Les timings des benchmarks devront être mesurés sans concurrence, avec les
-caches déjà préparés et en comptant séparément le pré-entraînement.
-
-**Les essais courts ne montrent pas que le SAE améliore l'affinité.** Ils
-valident l'intégration, ses losses, les contrôles et les exports. Le sous-ensemble
-est biaisé par la sélection des petites séquences/molécules et ne représente
-pas le benchmark Davis complet.
-
-Non exécuté dans cette extension : benchmarks complets Davis/KIBA/BindingDB,
-seeds 0 à 4 au complet, quatre splits sur tous les datasets, voie CUDA et
-reproduction exacte des résultats de Fadoua. Les données et les commandes pour
-ces protocoles sont disponibles. La matrice complète pré-entraînée avec Top-K
-a été générée en **dry-run** (684 commandes), sans prétendre les avoir exécutées.
+Le projet constitue une baseline MD modulaire vérifiée sur un petit dataset
+réel. Il ne constitue pas une reproduction de résultats publiés sur les grands
+benchmarks. Les références statiques sont archivées dans `STATIC_SAE.md`,
+`VALIDATION_SAE.md`, `BASELINE.md` et `VALIDATION_BASELINE.md`.

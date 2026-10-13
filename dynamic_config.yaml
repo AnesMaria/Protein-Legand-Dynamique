@@ -1,0 +1,58 @@
+seed: 0
+device: auto
+data:
+  manifest: examples/misato_kd_tiny/manifest.csv
+  fractions: [0.6, 0.2, 0.2]
+dynamic:
+  max_frames: 16
+  frame_stride: 1
+  graph_dim: 64
+  graph_layers: 2
+  graph_radius: 5.0
+  patch_radius: 8.0
+  patches: 8
+  temporal_dim: 128
+  temporal_mode: gru
+  language_context: false
+model:
+  projector: sae
+  scorer: quantum
+  patch_dim: 256
+  projection_hidden: 64
+  dropout: 0.1
+  n_qubits: 4
+  quantum_layers: 2
+  angle_encoding: RY
+  head_hidden: [128]
+sae:
+  latent_dim: 64
+  hidden_dim: 128
+  sparsity_mode: l1
+  lambda_sparse: 0.0001
+  topk: 8
+  reconstruction_weight: 0.1
+  sparsity_weight: 0.00001
+  activity_threshold: 0.000001
+encoders:
+  protein:
+    model: facebook/esm2_t6_8M_UR50D
+    revision: c731040fcd8d73dceaa04b0a8e6329b345b0f5df
+    freeze: true
+    cache: embeddings/protein
+    chunk_size: 1000
+  ligand:
+    model: DeepChem/ChemBERTa-77M-MTR
+    revision: 66b895cab8adebea0cb59a8effa66b2020f204ca
+    freeze: true
+    cache: embeddings/ligand
+    max_length: 512
+training:
+  batch_size: 2
+  epochs: 100
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  patience: 15
+  min_delta: 0.00001
+  gradient_clip: 5.0
+  num_workers: 0
+  output: runs/dynamic

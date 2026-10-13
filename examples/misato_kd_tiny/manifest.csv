@@ -1,0 +1,13 @@
+complex_id,trajectory_id,replica_id,protein_id,ligand_id,protein_group,ligand_group,sequence,smiles,trajectory_path,affinity,target_type,source,synthetic
+184L,184L_r0,0,P00720,I4B,P00720,,,,trajectories/184L_r0.npz,4.721246399047171,pKd,MISATO,False
+185L,185L_r0,0,P00720,IND,P00720,,,,trajectories/185L_r0.npz,3.5376020021010435,pKd,MISATO,False
+186L,186L_r0,0,P00720,N4B,P00720,,,,trajectories/186L_r0.npz,4.853871964321762,pKd,MISATO,False
+187L,187L_r0,0,P00720,PXY,P00720,,,,trajectories/187L_r0.npz,3.3746875490383257,pKd,MISATO,False
+188L,188L_r0,0,P00720,OXE,P00720,,,,trajectories/188L_r0.npz,3.327902142064283,pKd,MISATO,False
+1A07,1A07_r0,0,P12931,4-mer,P12931,,,,trajectories/1A07_r0.npz,6.3979400086720375,pKd,MISATO,False
+1A08,1A08_r0,0,P12931,4-mer,P12931,,,,trajectories/1A08_r0.npz,5.619788758288394,pKd,MISATO,False
+1A09,1A09_r0,0,P12931,4-mer,P12931,,,,trajectories/1A09_r0.npz,6.698970004336019,pKd,MISATO,False
+1A1B,1A1B_r0,0,P12931,3-mer,P12931,,,,trajectories/1A1B_r0.npz,6.3979400086720375,pKd,MISATO,False
+1A1C,1A1C_r0,0,P12931,3-mer,P12931,,,,trajectories/1A1C_r0.npz,6.3979400086720375,pKd,MISATO,False
+1A1E,1A1E_r0,0,P12931,4-mer,P12931,,,,trajectories/1A1E_r0.npz,6.0,pKd,MISATO,False
+1A3E,1A3E_r0,0,P00734,18-mer,P00734,,,,trajectories/1A3E_r0.npz,8.455931955649724,pKd,MISATO,False

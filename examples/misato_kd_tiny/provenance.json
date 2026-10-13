@@ -1,0 +1,123 @@
+{
+  "source_md": "https://github.com/t7morgen/misato-dataset/blob/7b06d532e2ed0719411fcc1b3ac39743db4ca10d/data/MD/h5_files/tiny_md.hdf5",
+  "source_labels": "https://github.com/kierandidi/misato-affinity/blob/d03e0e84ce0e73512dbc2f7741e7f36537874745/data/affinity_data.h5",
+  "endpoint": "Kd",
+  "complexes": 12,
+  "exclusions": {
+    "10GS": "excluded endpoint/censoring/value: Ki (nM), =",
+    "11GS": "excluded endpoint/censoring/value: Ki (nM), =",
+    "13GS": "excluded endpoint/censoring/value: Ki (nM), =",
+    "16PK": "no experimental label",
+    "1A0Q": "no experimental label",
+    "1A28": "excluded endpoint/censoring/value: Ki (nM), =",
+    "1A2C": "excluded endpoint/censoring/value: IC50 (nM), =",
+    "1A30": "excluded endpoint/censoring/value: Ki (nM), ="
+  },
+  "crops": {
+    "184L": {
+      "protein_heavy_before_crop": 1290,
+      "protein_atoms": 64,
+      "ligand_atoms": 10,
+      "nearest_atom_fallback": false,
+      "truncated_pocket": true
+    },
+    "185L": {
+      "protein_heavy_before_crop": 1290,
+      "protein_atoms": 64,
+      "ligand_atoms": 9,
+      "nearest_atom_fallback": false,
+      "truncated_pocket": true
+    },
+    "186L": {
+      "protein_heavy_before_crop": 1290,
+      "protein_atoms": 64,
+      "ligand_atoms": 10,
+      "nearest_atom_fallback": false,
+      "truncated_pocket": true
+    },
+    "187L": {
+      "protein_heavy_before_crop": 1290,
+      "protein_atoms": 64,
+      "ligand_atoms": 8,
+      "nearest_atom_fallback": false,
+      "truncated_pocket": true
+    },
+    "188L": {
+      "protein_heavy_before_crop": 1290,
+      "protein_atoms": 64,
+      "ligand_atoms": 8,
+      "nearest_atom_fallback": false,
+      "truncated_pocket": true
+    },
+    "1A07": {
+      "protein_heavy_before_crop": 1692,
+      "protein_atoms": 64,
+      "ligand_atoms": 34,
+      "nearest_atom_fallback": false,
+      "truncated_pocket": true
+    },
+    "1A08": {
+      "protein_heavy_before_crop": 849,
+      "protein_atoms": 64,
+      "ligand_atoms": 41,
+      "nearest_atom_fallback": false,
+      "truncated_pocket": true
+    },
+    "1A09": {
+      "protein_heavy_before_crop": 1683,
+      "protein_atoms": 64,
+      "ligand_atoms": 41,
+      "nearest_atom_fallback": false,
+      "truncated_pocket": true
+    },
+    "1A1B": {
+      "protein_heavy_before_crop": 1692,
+      "protein_atoms": 64,
+      "ligand_atoms": 39,
+      "nearest_atom_fallback": false,
+      "truncated_pocket": true
+    },
+    "1A1C": {
+      "protein_heavy_before_crop": 1692,
+      "protein_atoms": 64,
+      "ligand_atoms": 38,
+      "nearest_atom_fallback": false,
+      "truncated_pocket": true
+    },
+    "1A1E": {
+      "protein_heavy_before_crop": 1686,
+      "protein_atoms": 64,
+      "ligand_atoms": 38,
+      "nearest_atom_fallback": false,
+      "truncated_pocket": true
+    },
+    "1A3E": {
+      "protein_heavy_before_crop": 2259,
+      "protein_atoms": 64,
+      "ligand_atoms": 95,
+      "nearest_atom_fallback": false,
+      "truncated_pocket": true
+    }
+  },
+  "time_unit": "frame_index",
+  "dt_ps_user_supplied": null,
+  "coordinates": "MISATO coordinates as provided; no additional PBC correction inferred",
+  "crop_policy": "fixed heavy-atom subset from union of contacts over selected frames",
+  "md_commit": "7b06d532e2ed0719411fcc1b3ac39743db4ca10d",
+  "labels_commit": "d03e0e84ce0e73512dbc2f7741e7f36537874745",
+  "transform": "Kd exacts only; 8/100 ordered snapshots; <=64 protein heavy atoms; all ligand heavy atoms; float32 coordinates",
+  "derivative_sha256": {
+    "1A09_r0.npz": "eb54b2a82ecabaa31de5709eb622111015d3491e7c88b119d64d89f8cd75b0f0",
+    "1A07_r0.npz": "98b83d97fafb99e9484cbfa2cb54f4d20ef63fce1550326cc7996b8ab97b150c",
+    "1A1E_r0.npz": "1b05612c6465e2b7f4fc3448d42eac036ad5faafab3718adef86da8caea06c9d",
+    "187L_r0.npz": "2949ba380bea3476211a71d5bf492112fefb97fd1a9996f153cfc6c0d94b023e",
+    "185L_r0.npz": "cf4437ab8fec5b9aa8b4bab708b625b03b705c6cdbb181dc960130f219df7f10",
+    "1A1B_r0.npz": "32736a9457cef18f31d1bad7ded28f1ff93632a463de195bbc6df3bea2433ebe",
+    "184L_r0.npz": "d3144c5071603a91f4abb3ea52e042225a4cfbb4c250e9ef23f7f6442c2eb0f0",
+    "1A3E_r0.npz": "cf37ffc8ad483f7b28e926f8937723f2d1621e5180d472096ef18e0bb676868c",
+    "1A08_r0.npz": "81655892ab506ef00d7a691db83200102e553f053fb75739e0d4385fed39f06a",
+    "1A1C_r0.npz": "c46025ef4f0b648faa7e1f80898faa173ae167266a4942b3d8e7e8d28cb39bfb",
+    "188L_r0.npz": "3d33e4faaa0c6cbe2f45306ceb678ea3083aeeef3de6f332115a5354ae46b6a5",
+    "186L_r0.npz": "1026518dfb7ebce13d3c756c4b435ea034a8535a950862c686460b0684cf8781"
+  }
+}

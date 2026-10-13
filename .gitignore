@@ -6,6 +6,7 @@ data/raw/
 data/processed/
 data/synthetic/
 data/smoke/
+data/dynamic/
 embeddings/
 runs/
 .cache/

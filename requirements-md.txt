@@ -1,0 +1,6 @@
+-r requirements.txt
+h5py==3.12.1
+# Optional raw .xtc/.dcd/.nc and topology importer:
+MDAnalysis==2.8.0
+matplotlib==3.10.1
+contourpy==1.3.2
