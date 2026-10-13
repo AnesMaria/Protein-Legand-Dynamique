@@ -1,0 +1,123 @@
+{
+  "source_commit": "305ea17f0a8509068fadd60ab633d26ccf39bc16",
+  "seed": 23,
+  "config": {
+    "seed": 23,
+    "device": "auto",
+    "data": {
+      "root": "data/processed",
+      "fractions": [
+        0.8,
+        0.1,
+        0.1
+      ]
+    },
+    "encoders": {
+      "protein": {
+        "model": "facebook/esm2_t6_8M_UR50D",
+        "revision": "c731040fcd8d73dceaa04b0a8e6329b345b0f5df",
+        "freeze": true,
+        "cache": "embeddings/protein",
+        "chunk_size": 1000
+      },
+      "ligand": {
+        "model": "DeepChem/ChemBERTa-77M-MTR",
+        "revision": "66b895cab8adebea0cb59a8effa66b2020f204ca",
+        "freeze": true,
+        "cache": "embeddings/ligand",
+        "max_length": 512
+      }
+    },
+    "patches": {
+      "window": 2,
+      "radius": 8.0,
+      "max_patches": 32,
+      "k": 4
+    },
+    "model": {
+      "projector": "mlp",
+      "scorer": "classical",
+      "freeze_patch_encoder": false,
+      "patch_dim": 16,
+      "projection_hidden": 8,
+      "dropout": 0.0,
+      "n_qubits": 4,
+      "quantum_layers": 2,
+      "angle_encoding": "RY",
+      "head_hidden": [
+        8
+      ]
+    },
+    "sae": {
+      "latent_dim": 64,
+      "hidden_dim": 128,
+      "sparsity_mode": "l1",
+      "lambda_sparse": 0.0001,
+      "topk": 8,
+      "pretrain_epochs": 30,
+      "pretrain_batch_size": 256,
+      "pretrain_learning_rate": 0.001,
+      "pretrain_validation_fraction": 0.1,
+      "freeze_after_pretrain": false,
+      "pretrained_checkpoint": null,
+      "reconstruction_weight": 0.1,
+      "sparsity_weight": 0.001,
+      "activity_threshold": 1e-06
+    },
+    "training": {
+      "save_latents": true,
+      "batch_size": 8,
+      "epochs": 100,
+      "learning_rate": 0.001,
+      "weight_decay": 0.0001,
+      "patience": 15,
+      "min_delta": 1e-05,
+      "scheduler": true,
+      "gradient_clip": 5.0,
+      "num_workers": 0,
+      "output": "runs"
+    }
+  },
+  "cases": {
+    "classical": {
+      "prediction": [
+        -0.14707380533218384,
+        -0.07614205777645111
+      ],
+      "attention": [
+        [
+          0.49979016184806824,
+          0.5002097487449646,
+          0.0,
+          0.0
+        ],
+        [
+          0.251107394695282,
+          0.249208465218544,
+          0.24838317930698395,
+          0.25130096077919006
+        ]
+      ]
+    },
+    "quantum": {
+      "prediction": [
+        0.35911381244659424,
+        0.23888100683689117
+      ],
+      "attention": [
+        [
+          0.49194270372390747,
+          0.5080573558807373,
+          0.0,
+          0.0
+        ],
+        [
+          0.25543975830078125,
+          0.2400953322649002,
+          0.25070253014564514,
+          0.25376230478286743
+        ]
+      ]
+    }
+  }
+}

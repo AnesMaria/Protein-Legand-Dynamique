@@ -22,6 +22,9 @@ patches:
   max_patches: 32
   k: 8
 model:
+  projector: mlp
+  scorer: classical
+  freeze_patch_encoder: false
   patch_dim: 256
   projection_hidden: 64
   dropout: 0.1
@@ -29,7 +32,23 @@ model:
   quantum_layers: 2
   angle_encoding: RY
   head_hidden: [256, 64]
+sae:
+  latent_dim: 64
+  hidden_dim: 128
+  sparsity_mode: l1
+  lambda_sparse: 0.0001
+  topk: 8
+  pretrain_epochs: 30
+  pretrain_batch_size: 256
+  pretrain_learning_rate: 0.001
+  pretrain_validation_fraction: 0.1
+  freeze_after_pretrain: false
+  pretrained_checkpoint: null
+  reconstruction_weight: 0.1
+  sparsity_weight: 0.00001
+  activity_threshold: 0.000001
 training:
+  save_latents: true
   batch_size: 8
   epochs: 100
   learning_rate: 0.001

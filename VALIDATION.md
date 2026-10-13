@@ -1,99 +1,128 @@
-# Validation de cette session
+# Validation de l'extension SAE
 
-Validation réalisée le 13 octobre 2026, sous Linux/Python 3.12 et PyTorch
-2.5.1 CPU. Aucun GPU CUDA n'était disponible. Les versions exactes sont dans
-`requirements-cpu.lock`. Les fichiers du projet ont été créés localement ;
-aucun commit ni push GitHub n'a été effectué.
+Validation réalisée le 13 octobre 2026, sous Linux, Python 3.12, PyTorch 2.5.1 CPU,
+Transformers 4.48.3 et PennyLane 0.40.0. Dépendances identiques à la baseline :
+aucun paquet supplémentaire nécessaire. La validation de la baseline originale
+est archivée dans [VALIDATION_BASELINE.md](VALIDATION_BASELINE.md).
 
-## Vérifications réussies
+## Ancien projet préservé
 
-- Installation des dépendances puis réexécution de `scripts/setup_cloud.sh` :
-  réussies ; `pip check` ne signale aucune dépendance incompatible.
-- Suite finale `python -m pytest -q` : **14 tests réussis**, aucun échec ni skip.
-  Deux avertissements attendus signalent les fallbacks sans structure.
-  Tests : splits reproductibles sans chevauchement froid, CI contre calcul
-  exhaustif, FPS sans doublons et invariant par rotation/translation,
-  gradients classique/quantique, masque des patches, ordre du batch,
-  features structurales optionnelles, indices de résidus, conversion nM,
-  doublons, alignement PDB exact, cache/gel/chunks et gradients de vrais
-  petits backbones Transformers, empreinte des graphes.
-- Scripts synthétiques d'optimisation : classiques et quantiques réussis,
-  avec gradients non nuls, baisse de MSE et restauration des poids.
-  MSE classique 0.508368 → 0.017456 ; quantique 0.685221 → 0.035024.
-  Ces nombres concernent des tenseurs synthétiques, pas des affinités réelles.
-- Chargement des vrais poids ESM-2 et ChemBERTa : réussi ; embeddings
-  résiduels de dimension 320 et ligands de dimension 384.
-  Une vraie séquence de 1017 résidus a été encodée en deux chunks sans perte.
-- Préparation Davis depuis le commit PocketDTA documenté : 30 056 lignes
-  sources, 25 772 paires uniques après agrégation. 442 graphes C-alpha/P2Rank
-  générés pour les identifiants sources, dont 419 avec correspondance exacte
-  de la chaîne à la séquence. Les autres emploient la moyenne ESM globale.
-- Préparation KIBA : 118 254 lignes sources, 117 657 paires uniques.
-  Pas de PDB dans cette version des archives : fallback séquentiel signalé.
-- Préparation BindingDB BALM : téléchargement public et réexécution depuis
-  le commit HF épinglé réussis ; 24 700 lignes sources, 20 477 paires uniques.
-- Génération des quatre splits sur chaque table complète : réussie.
+La copie a été créée dans `/workspace/Protein-Legand-Spase-Autoencoder` à partir
+du commit `305ea17f0a8509068fadd60ab633d26ccf39bc16`. Le checkout et le dépôt
+distant `AnesMaria/proteine-legand` sont conservés sans modification de code.
+Les données/caches utiles ont été copiés, pas reliés par des symlinks. Les
+chemins des graphes pointent vers leurs nouvelles copies.
 
-| Table | Random train/val/test | Cold-Both train/val/test | Paires exclues Cold-Both |
-|---|---|---|---|
-| Davis | 20618 / 2577 / 2577 | 17080 / 222 / 222 | 8248 |
-| KIBA | 94127 / 11765 / 11765 | 76368 / 1373 / 902 | 39014 |
-| BindingDB | 16383 / 2047 / 2047 | 14212 / 152 / 141 | 5972 |
+Comparaison des trois CSV préparés : séquences, SMILES, identifiants et affinités
+identiques à l'ancien projet. Comparaison octet par octet : `datasets.py`,
+`quantum_layer.py`, `patch_encoder.py`, `patch_selection.py`, les encodeurs
+ESM/ChemBERTa, `pocket_data.py` et `engine.py` restent identiques à la baseline.
 
-Ces effectifs sont ceux de la seed 0, fractions 0.8/0.1/0.1.
+## Tests automatiques
 
-## Essais d'entraînement sur Davis réel
+Suite finale : **31 tests réussis, zéro échec, zéro skip**. Neuf avertissements
+attendus signalent le fallback sans structure sur les tenseurs de test.
 
-`scripts/make_davis_smoke.py` a sélectionné 12 séquences courtes et 8 ligands,
-soit 96 paires réelles. Les poids préentraînés, les graphes PDB/P2Rank, le
-scoring, AdamW, les logs, la validation, les checkpoints et le test ont été
-exercés ensemble pendant deux epochs.
+Les 14 tests initiaux ont été conservés. Les nouveaux tests couvrent :
 
-| Variante | Split | Train/val/test | Résultat technique |
-|---|---|---|---|
-| Classique | random | 58 / 19 / 19 | réussi |
-| Quantique | random | 58 / 19 / 19 | réussi |
-| Classique | cold_both | 48 / 2 / 2 | réussi |
-| Quantique | cold_both | 48 / 2 / 2 | réussi |
+- SAE L1 et Top-K : dimensions, pertes et gradients encoder/decoder.
+- Top-K : plafond de K activations, égalités déterministes, K invalide.
+- MLP classique et quantique : prédictions et attention comparées aux sorties
+  enregistrées depuis le véritable code du commit original.
+- Initialisation commune des patches, scoreurs et têtes entre les ablations.
+- Reconstruction/sparsité calculées uniquement sur les patches valides,
+  gradients vers le circuit et le SAE, batch à un seul exemple.
+- Projection identité quand la dimension du latent égale le nombre de qubits.
+- Moments streaming, exports NPZ alignés avec les IDs/paires/patches.
+- Refus des transferts entre seeds, splits ou lignes train différentes.
+- Agrégation : seed exclue de la signature, coefficients contrôlés,
+  refus de mélanger des losses différentes.
+- AE gelé : pas de gradients sur ses paramètres, mais gradients conservés
+  vers la projection et les patches quand ceux-ci restent entraînables.
 
-`evaluate.py` a reproduit les métriques test des deux checkpoints random
-après rechargement. La répétition des runs seed 0 a donné les mêmes pertes.
-Un run classique random supplémentaire seed 1 et l'agrégation seed 0/1 avec
-écart-type `ddof=1` ont aussi réussi.
+Les scripts d'optimisation synthétiques L1+Quantum, Top-K+Quantum et
+Dense AE+Quantum ont aussi terminé : baisse de loss, gradients et restauration
+des checkpoints vérifiés. Les tenseurs synthétiques ne sont pas des données
+scientifiques d'affinité.
 
-Les résultats détaillés se trouvent dans `runs/davis_smoke/` sur la machine.
-Ils ne sont pas inclus dans l'archive de code. **Ces essais sont des tests de
-fonctionnement sur un sous-ensemble biaisé, pas des résultats scientifiques.**
-Les corrélations sur deux points en Cold-Both n'ont aucune valeur probante
-pour la qualité prédictive.
+## Essais avec les vrais encodeurs et pockets Davis
 
-## Corrections d'environnement appliquées
+Sous-ensemble de fonctionnement : 96 paires, 12 séquences courtes, 8 ligands,
+split random seedé : 58 train / 19 validation / 19 test. ESM-2, ChemBERTa et
+graphes C-alpha/P2Rank réels ont été utilisés, comme dans la baseline.
 
-- Cache Hugging Face dirigé vers le dossier du projet, accessible en écriture.
-- PyArrow 26 nécessitait NumPy >=2 et empêchait l'import de `datasets` avec
-  NumPy 1.26.4. Épinglage de PyArrow 19.0.1, puis nouvel import et préparation
-  BindingDB réussis. Aucune vérification TLS/checksum n'a été désactivée.
-- Révisions des deux modèles et de BALM épinglées ; versions transitives CPU
-  enregistrées dans le verrou testé.
+Le runner end-to-end a terminé les sept variantes sur seeds **0 et 1**, deux
+epochs par run : **14 runs**, plus les sept agrégations mean ± sample std.
+Ces premiers essais employaient `beta=1e-3` pour L1. Les paramètres entraînables
+mesurés dans ce protocole, backbones gelés :
 
-## Configuration cloud sauvegardée
+| Variante | Paramètres entraînables |
+|---|---:|
+| MLP + Classical | 282738 |
+| MLP + Quantum | 282742 |
+| SAE L1 + Classical | 348786 |
+| SAE L1 + Quantum | 348790 |
+| Dense AE + Quantum | 348790 |
+| SAE Top-K + Classical | 348786 |
+| SAE Top-K + Quantum | 348790 |
 
-Le brouillon contient `install_script`, `start_skill` et les domaines réseau
-`huggingface.co`, `*.huggingface.co`, `*.hf.co`, `*.xethub.hf.co` ; les presets
-de gestionnaires de paquets existants sont conservés. Aucun secret ajouté.
-La sauvegarde du brouillon est confirmée ; elle ne constitue pas une publication
-ni une validation de restauration dans une nouvelle tâche. Revoir et enregistrer
-les paramètres, puis publier l'environnement via l'interface si souhaité.
+Les AE incluent les paramètres du decoder dans ce compte ; les nombres ne
+constituent pas une égalisation de budget entre MLP et AE. Dense AE et SAE
+ont la même architecture/initialisation, ce qui contrôle l'effet de la sparsité.
 
-## Non exécuté ou non vérifié
+Pré-entraînement : L1 (3 epochs), Top-K et Dense AE (2 epochs) terminés sur les
+entrées du train uniquement. Une validation interne disjointe par séquence
+protéique a été vérifiée. Les trois pré-entraînements conservent exactement
+les mêmes poids de l'encodeur de patches en amont.
 
-- Entraînement de benchmark sur Davis complet et seeds 0 à 4.
-- Cache intégral des embeddings Davis/KIBA/BindingDB : seuls les éléments
-  nécessaires aux essais courts ont été encodés. Les poids des deux modèles
-  sont déjà téléchargés ; `prepare_embeddings.py` complétera les caches.
-- Entraînements KIBA et BindingDB, voie CUDA, export de pickles TorchDrug natifs.
-- Reproduction exacte de l'architecture/résultats de Fadoua et comparaison aux
-  folds publiés ; les hypothèses et différences sont détaillées dans README.md.
-- Publication, nouveau démarrage cloud, push vers le dépôt distant.
+Le runner `--protocol pretrained --include-topk` a aussi terminé ses **sept
+variantes seed 0**, avec des patches figés pour toutes les branches et
+`beta=1e-5`, dans une racine distincte. Les AE étaient fine-tunés.
+Un essai séparé avec SAE **et** patches gelés a vérifié le gel, la sauvegarde et
+la restauration des métriques. Les transferts pré-entraînés Top-K et Dense AE
+ont été vérifiés aussi individuellement.
 
-Aucun Sparse Autoencoder n'a été ajouté.
+`evaluate.py` a reproduit les métriques du checkpoint SAE+Quantum joint après
+rechargement, avec export des latents. `analyze_latents.py` a produit les
+statistiques par dimension, neurones morts et histogrammes JSON pour L1 et
+Top-K. Les latents Top-K ont au plus 8 valeurs actives sur 64 ; dans ces essais
+le ratio observé était 0.125, conforme au ratio nominal.
+
+Un transfert volontaire d'un checkpoint random vers Cold-Both a été **refusé
+comme prévu**. Les splits et les lignes train doivent correspondre exactement.
+
+## Observation de collapse et choix initial du coefficient
+
+La L1 est une norme **sommée sur les latents**, puis moyennée sur les patches.
+Avec `alpha=0.1`, `beta=1e-3`, le deuxième epoch du train de l'essai L1+Quantum
+seed 0 donnait seulement **0.84 latent actif sur 64** en moyenne et une variance
+latente très faible. Une simple fraction élevée de zéros aurait donc été une
+conclusion trompeuse.
+
+Un essai train avec `beta=1e-5` donnait environ **26.95 latents actifs sur 64** au
+deuxième epoch, avec variance conservée. Les branches classique et quantique
+ont toutes deux été vérifiées avec ce coefficient. La config initiale publiée
+emploie donc `beta=1e-5`, cohérent avec `alpha*lambda_sparse` pour `lambda=1e-4`.
+Ce choix repose sur les diagnostics du train, pas sur un gain de RMSE du test.
+Il ne remplace pas une recherche d'hyperparamètres et une surveillance des
+neurones morts sur les véritables expériences.
+
+## Résultats et limites
+
+Les logs, timings, checkpoints, NPZ et JSON détaillés sont conservés dans les
+dossiers ignorés `runs/` de la machine. Les scripts enregistrent les temps de
+train/inférence, mais ces petites mesures CPU et les exécutions concurrentes
+de validation ne conviennent pas à une comparaison de vitesse scientifique.
+Les timings des benchmarks devront être mesurés sans concurrence, avec les
+caches déjà préparés et en comptant séparément le pré-entraînement.
+
+**Les essais courts ne montrent pas que le SAE améliore l'affinité.** Ils
+valident l'intégration, ses losses, les contrôles et les exports. Le sous-ensemble
+est biaisé par la sélection des petites séquences/molécules et ne représente
+pas le benchmark Davis complet.
+
+Non exécuté dans cette extension : benchmarks complets Davis/KIBA/BindingDB,
+seeds 0 à 4 au complet, quatre splits sur tous les datasets, voie CUDA et
+reproduction exacte des résultats de Fadoua. Les données et les commandes pour
+ces protocoles sont disponibles. La matrice complète pré-entraînée avec Top-K
+a été générée en **dry-run** (684 commandes), sans prétendre les avoir exécutées.

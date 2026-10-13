@@ -1,396 +1,356 @@
-# Baseline protéine–ligand classique / quantique
+# Protein-Legand-Spase-Autoencoder
 
-Projet PyTorch modulaire, **sans Sparse Autoencoder**, utilisant ESM-2,
-DeepChem/ChemBERTa-77M-MTR et PennyLane. Le code complet est dans les fichiers
-ci-dessous. Commencer par Davis, puis comparer classique / quantique sur les
-mêmes partitions avant de passer à KIBA ou BindingDB.
+Extension du projet [proteine-legand](https://github.com/AnesMaria/proteine-legand)
+pour comparer **MLP**, **Sparse Autoencoder L1**, **Sparse Autoencoder Top-K** et
+**Dense Autoencoder** avant un scoreur classique ou quantique. L'ancien dépôt
+reste intact. Cette copie conserve son historique et sa baseline au commit
+`305ea17f0a8509068fadd60ab633d26ccf39bc16`.
 
-## 1. Architecture générale
+L'hypothèse étudiée est qu'une représentation sparse et compacte des patches
+peut réduire leur redondance et améliorer le scoring quantique. **C'est une
+hypothèse à tester, pas un gain de performance établi.**
 
-```mermaid
-flowchart LR
-    S[Séquence] --> E[ESM-2 par résidu]
-    G[Pocket / graphe optionnel] --> P[Construction des patches]
-    E --> P
-    P --> F[FPS 3D ou couverture uniforme]
-    F --> V[Encodeur partagé : patch de dimension 256]
-    V --> M[MLP 256 → 64 → n_qubits]
-    M --> Q[Circuit quantique ou scoreur classique]
-    Q --> Z[Score scalaire et softmax masqué]
-    V --> W[Somme pondérée des patches]
-    Z --> W
-    L[SMILES] --> C[ChemBERTa et moyenne des tokens]
-    W --> R[Concaténation et MLP de régression]
-    C --> R
-    R --> A[Affinité scalaire]
-```
+## 1. Où intégrer le SAE
 
-Pour le patch `p_i`, `s_i = score(circuit(projection(p_i)))`,
-`alpha_i = softmax(s)_i`, `h_P = somme(alpha_i * p_i)`.
-Le pooling porte sur les patches de dimension 256, pas sur les mesures
-quantiques. Les patches de remplissage sont masqués et jamais simulés.
-
-## 2. Sources vérifiées et hypothèses de reproduction
-
-Sources consultées et utilisées :
-
-- [PocketDTA](https://github.com/BioCenter-SHU/PocketDTA), commit
-  `0e03b353544129fac537321787a1b38aba6e0192`. Les tables sont
-  `data/Davis/davis_datasets.csv` et `data/KIBA/kiba_datasets.csv`, avec
-  `Target_ID`, `Target`, `Drug_ID`, `Drug`, `Y`, `PDB_File`.
-  Davis contient des archives `pdb.zip` et `p2rank.zip`.
-  Les objets originaux de ce dépôt sont des objets TorchDrug/GearNet ; les
-  champs GVP `node_s/node_v/edge_s/edge_v` ne sont pas présumés présents.
-- [BALM](https://github.com/meyresearch/BALM), code consulté au commit
-  `c0a4ecb828c44ba1633e06e885da12c5a6ababd6`, et
-  [BALM-benchmark](https://huggingface.co/datasets/BALM/BALM-benchmark),
-  configuration `BindingDB_filtered`, split source `train`. Ce split HF
-  désigne la table source, **pas** le split d'entraînement créé ici.
-  Les noms de colonnes sont aussi `Target`, `Drug`, `Y`, etc.
-  Le code BALM regroupe les doublons par maximum de `Y`.
-- Encodeurs : [ESM-2](https://huggingface.co/facebook/esm2_t6_8M_UR50D) et
-  [ChemBERTa-77M-MTR](https://huggingface.co/DeepChem/ChemBERTa-77M-MTR).
-  Leurs révisions par défaut sont `c731040fcd8d73dceaa04b0a8e6329b345b0f5df`
-  et `66b895cab8adebea0cb59a8effa66b2020f204ca`. Le benchmark BALM est
-  épinglé à `84e07e27a093181ee89c97a0d7a45482803aa9bd`.
-
-Les paramètres exacts de l'architecture de Fadoua et son protocole expérimental
-n'ont pas été fournis. Ce projet est une baseline exécutable fondée sur votre
-schéma, **pas une reproduction certifiée de ses résultats**. Choix explicites :
-
-| Élément | Choix de cette baseline |
-|---|---|
-| ESM-2 | `esm2_t6_8M_UR50D` (320 dimensions) pour commencer ; configurable |
-| Ligand | ChemBERTa-77M-MTR, 384 dimensions, moyenne sans tokens spéciaux |
-| Backbones | Gelés par défaut, aucun SAE ; dégel configurable |
-| Longues protéines | Chunks de 1000 résidus, concaténés sans troncature ; contexte interrompu aux frontières |
-| Longs SMILES | Erreur explicite au-delà de la capacité ; aucune troncature silencieuse |
-| Structure Davis | C-alpha et features P2Rank de la pocket de rang 1, pas l'encodeur GearNet original |
-| Voisinages | Sphères de rayon 8 Å ; jusqu'à 32 ancres FPS, puis 8 patches sélectionnés |
-| Graphe sans coordonnées | Groupes contigus de nœuds ; leur ordre n'est pas supposé être un ordre biologique |
-| Sans structure | Fenêtres de 32 résidus ESM, couverture uniforme ; fallback séquentiel signalé |
-| Alignement | `residue_index` zéro-based explicite ; pour PDB, correspondance de chaîne complète exacte uniquement |
-| Alignement inconnu | Moyenne ESM globale dans chaque patch structural, jamais d'indices inventés |
-| Vecteur structural | 10 valeurs : moyenne/std de node_s, normes node_v, edge_s, normes edge_v et degré interne |
-| Patch fixe | LayerNorm et Linear/GELU de `(dim_ESM + 10)` vers 256 |
-| Projection | MLP `256 → 64 → n_qubits`, GELU et dropout 0.1 |
-| Circuit | 4 qubits, 2 couches `Rot` + anneau CNOT, `RY(pi*tanh(x))`, mesures Pauli-Z |
-| RX/RY/RZ optionnel | Le même angle est appliqué aux trois axes ; ce ne sont pas trois angles indépendants |
-| Variante classique | Même projection/pooling/tête ; petit MLP à la place du circuit |
-| Fusion | Concaténation puis `640 → 256 → 64 → 1` avec l'ESM choisi par défaut |
-| Splits | Splits locaux seedés, pas les folds publiés PocketDTA/BALM |
-| Doubles enregistrements | Identité par séquence/SMILES ; moyenne Davis/KIBA, maximum BindingDB |
-
-L'agrégation des alias change la population : 30 056 lignes Davis deviennent
-25 772 paires uniques, et 118 254 lignes KIBA deviennent 117 657 paires uniques.
-Cette décision évite de répartir la même entrée du modèle entre train et test,
-mais empêche de comparer directement les métriques aux tables originales.
-Les identités utilisent le texte SMILES exact : deux SMILES différents pour la
-même molécule ne sont pas automatiquement canonicalisés. Un protocole de
-généralisation chimique strict doit canonicaliser en amont avec une politique
-RDKit explicitement choisie. Les splits froids ne garantissent pas non plus
-l'absence de protéines homologues entre partitions.
-
-Davis `Y` est déjà en pKd ; KIBA `Y` est un score KIBA ; BindingDB BALM est utilisé
-sur son échelle pKd. Ne pas mélanger ces cibles. `--affinity-unit nM` est réservé
-aux CSV personnalisés contenant de vrais Kd positifs en nM et applique
-`pKd = 9 - log10(Kd_nM)`. Cette conversion est interdite pour KIBA.
-
-## 3. Liste exacte des fichiers
+Le SAE reçoit les patches **déjà construits, sélectionnés et représentés** par
+`PatchEncoder`, au point occupé par `AffinityModel.projection` :
 
 ```text
-proteine-legand/
-├── README.md
-├── VALIDATION.md                 # preuves et limites de cette session
-├── .gitignore
-├── config.yaml
-├── requirements.txt             # dépendances directes épinglées
-├── requirements-cpu.lock         # versions transitives testées Linux/Python 3.12
-├── prepare_data.py               # PocketDTA et BALM vers le schéma commun
-├── prepare_embeddings.py         # caches des backbones gelés
-├── train.py                      # AdamW, MSE, scheduler, early stopping, checkpoint
-├── evaluate.py                   # évaluation du split enregistré
-├── aggregate.py                  # mean ± std inter-seeds
-├── src/
-│   ├── __init__.py
-│   ├── datasets.py               # splits, Dataset, DataLoader
-│   ├── protein_encoder.py        # ESM-2, chunks, mean/résidus, gel et cache
-│   ├── ligand_encoder.py         # ChemBERTa, gel et cache
-│   ├── pocket_data.py            # adaptateur PDB/P2Rank explicite
-│   ├── patch_encoder.py          # graphes, construction et encodage des patches
-│   ├── patch_selection.py        # FPS et fallback uniforme
-│   ├── quantum_layer.py          # QNode et TorchLayer différentiables
-│   ├── model.py                  # projection, scoring, pooling, fusion
-│   ├── metrics.py                # RMSE, MAE, Pearson, Spearman, CI
-│   ├── engine.py                 # boucle commune et empreinte des données
-│   └── utils.py                  # seeds, config, sauvegardes et shapes
-├── scripts/
-│   ├── setup_cloud.sh            # installation CPU répétable
-│   ├── make_davis_smoke.py        # sous-ensemble réel pour test de fonctionnement
-│   ├── smoke.py                   # optimisation classique/quantique hors réseau
-│   ├── export_torchdrug.py        # export de pickles source de confiance
-│   └── run_seeds.sh               # seeds 0,1,2,3,4 puis agrégation
-└── tests/
-    ├── test_pipeline.py
-    └── test_encoders.py
+ESM-2 + pocket/graphe
+  → extraction des patches et sélection FPS/fallback (inchangées)
+  → représentation du patch p_i, dimension d = model.patch_dim
+  → MLP OU SAE/Dense AE
+  → dimension n_qubits
+  → scoreur classique OU circuit PennyLane (inchangé)
+  → score scalaire par patch
+  → softmax masqué
+  → somme(alpha_i * p_i), toujours sur les patches d'origine
+  → concaténation avec ChemBERTa
+  → tête MLP d'affinité
 ```
 
-Créés au fil des commandes, et ignorés par Git : `data/raw/`,
-`data/processed/`, `data/smoke/`, `embeddings/`, `.cache/` et `runs/`.
-Les données/poids volumineux ne sont pas inclus dans l'archive du code.
+Branche SAE : `p_i → encoder → z_i sparse → Linear → circuit → score`.
+Le decoder reconstruit `p_i` et sert à la loss auxiliaire. Si `latent_dim`
+égale `n_qubits`, la projection légère est une identité. Le pooling n'est pas
+remplacé par une moyenne des latents : son rôle reste strictement celui de la
+baseline. Les patches de padding ne sont ni autoencodés ni inclus dans les losses.
 
-## 4. Installation exacte
+## 2. Branches et conventions explicites
 
-Python 3.12 sous Linux est la configuration CPU testée. Python 3.10/3.11 devrait
-convenir aux dépendances directes, mais n'a pas été validé ici.
+| Expérience | Projecteur | Scoreur | Contrôle |
+|---|---|---|---|
+| 1 | `mlp` | `classical` | baseline classique |
+| 2 | `mlp` | `quantum` | baseline quantique |
+| 3 | `sae`, `l1` | `classical` | compression sparse sans circuit |
+| 4 | `sae`, `l1` | `quantum` | hypothèse principale |
+| 5 | `dense_ae` | `quantum` | même AE, sans contrainte de sparsité |
+| 6–7 optionnelles | `sae`, `topk` | `classical` / `quantum` | autre mécanisme de sparsité |
 
-Dans cet environnement cloud :
+SAE et Dense AE partagent exactement les couches :
 
-```bash
-cd /workspace/proteine-legand
-bash scripts/setup_cloud.sh
-source /workspace/.venvs/proteine-legand/bin/activate
-export PIP_CACHE_DIR=/workspace/.cache/pip
-export HF_HOME=/workspace/proteine-legand/.cache/huggingface
-export OMP_NUM_THREADS=2
+```text
+encoder : d → hidden_dim → ReLU → latent_dim → ReLU
+decoder : latent_dim → hidden_dim → ReLU → d
+projection légère : latent_dim → n_qubits
 ```
 
-Sur une autre machine, dans le dossier du projet (CPU) :
+Dense AE signifie **sans pénalité sparse et sans masque Top-K**. La ReLU
+commune peut tout de même produire des zéros ; changer son activation dans le
+contrôle aurait introduit un autre facteur de comparaison.
+
+- L1 : `mean_sur_patches(sum_sur_latents(abs(z)))`. C'est la norme L1 moyenne
+  par patch, et non une moyenne divisée par la dimension du latent.
+- Top-K : après ReLU, seules les K plus fortes activations sont conservées.
+  Les égalités sont départagées de façon stable. Le masque impose la sparsité,
+  donc aucune L1 supplémentaire n'est appliquée. K/d_z est le ratio **nominal** ;
+  le ratio mesuré peut être inférieur si certaines valeurs retenues sont nulles.
+- Reconstruction : MSE moyenne sur tous les éléments des patches valides.
+  La cible est détachée de l'autograd dans le mode end-to-end.
+- L'encodeur de patches, le scoreur et la tête commencent avec les mêmes poids
+  pour une même seed dans toutes les ablations. L'initialisation AE est isolée
+  pour ne pas décaler le générateur aléatoire de la baseline.
+
+Configuration initiale : `latent_dim=64`, `hidden_dim=128`, `topk=8`,
+`lambda_sparse=1e-4` pour le pré-entraînement, `alpha=0.1` et `beta=1e-5`
+pour le mode joint. `input_dim` est automatiquement `model.patch_dim` (256
+dans la baseline), sans dimension codée en dur. Le beta illustratif de `1e-3`
+provoquait un collapse des latents dans le petit test train ; avec notre norme
+L1 **sommée par patch**, `1e-5` est un point de départ plus prudent, cohérent
+avec `alpha * lambda_sparse`. Ces hyperparamètres restent à choisir sur
+train/validation pour chaque protocole, sans sélectionner sur le test.
+
+Le circuit, les encodeurs ESM/ChemBERTa, les loaders/splits, la préparation des
+pockets et la sélection des patches sont repris sans modification. Les
+hypothèses de reproduction PocketDTA/BALM, l'agrégation des doublons, les
+fallbacks et les unités d'affinité restent celles de [BASELINE.md](BASELINE.md).
+Les paramètres exacts de Fadoua n'ont toujours pas été fournis.
+
+## 3. Fichiers créés ou adaptés
+
+Nouveaux fichiers :
+
+```text
+src/sparse_autoencoder.py      # SparseAutoencoder, DenseAutoencoder, projection
+src/sae_losses.py              # reconstruction, sparsité et objectif total
+src/train_utils.py             # entraînement, diagnostics, provenance, transfert
+pretrain_sae.py                # entraînement non supervisé sur patches de train
+scripts/analyze_latents.py     # statistiques et histogramme JSON
+scripts/run_experiments.py     # matrice d'ablations, datasets/splits/seeds
+scripts/smoke_sae.py           # test d'optimisation hors réseau
+tests/test_sae.py              # gradients, Top-K, padding, transferts, baseline
+tests/fixtures/baseline_predictions.json # sorties du modèle d'origine
+README.md / VALIDATION.md      # cette extension et ses vérifications
+BASELINE.md / VALIDATION_BASELINE.md # documents originaux archivés
+```
+
+Adaptations minimales :
+
+- `src/model.py` : projecteur sélectionnable, exposition des patches, sortie
+  auxiliaire optionnelle ; le chemin MLP conserve ses opérations originales.
+- `train.py` : CLI, pré-entraînement, losses, logs, paramètres, temps et exports.
+- `evaluate.py` : mêmes checkpoints/splits, diagnostics et exports des latents.
+- `config.yaml` : choix du projecteur, SAE et coefficients configurables.
+- `aggregate.py` : mean ± std et refus de mélanger des expériences différentes.
+- `scripts/run_seeds.sh` et `scripts/setup_cloud.sh` : nouveau projet indépendant.
+
+`src/patch_encoder.py` n'a pas besoin d'être modifié : le modèle expose son
+résultat avec `encode_patch_records`. `src/quantum_layer.py`, `datasets.py`,
+`patch_selection.py`, les deux encodeurs et `pocket_data.py` sont identiques
+au dépôt original. `src/engine.py` conserve les helpers de provenance de la
+baseline ; la boucle AE est séparée dans `src/train_utils.py`.
+
+## 4. Installation et données
+
+Dans un nouveau clone CPU (Python 3.12 testé) :
 
 ```bash
+git clone https://github.com/AnesMaria/Protein-Legand-Spase-Autoencoder.git
+cd Protein-Legand-Spase-Autoencoder
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --index-url https://download.pytorch.org/whl/cpu 'torch==2.5.1'
 python -m pip install -r requirements.txt -c requirements-cpu.lock
 python -m pip check
+export OMP_NUM_THREADS=2
 python -m pytest -q
-```
 
-Pour une machine NVIDIA avec pilote compatible CUDA 12.1, utiliser un nouvel
-environnement et **ne pas appliquer le verrou CPU** :
-
-```bash
-python3 -m venv .venv-cuda
-source .venv-cuda/bin/activate
-python -m pip install --index-url https://download.pytorch.org/whl/cu121 'torch==2.5.1'
-python -m pip install -r requirements.txt
-python -c 'import torch; print(torch.cuda.is_available())'
-```
-
-`device: auto` choisit CUDA si disponible. Le simulateur `default.qubit` reste
-sur CPU ; les transferts conservent l'autograd. Aucun GPU n'était disponible
-dans la session de validation, donc la voie CUDA n'est pas encore testée.
-Les dépôts et poids utilisés sont publics : aucun token n'est requis en principe.
-Respecter les licences des données et modèles en cas de redistribution.
-
-## 5. Préparer Davis en premier
-
-```bash
 python prepare_data.py --dataset davis
 python prepare_embeddings.py --dataset davis
 ```
 
-La première commande clone PocketDTA dans `data/raw/PocketDTA`, choisit le
-commit documenté, lit son CSV, construit les graphes C-alpha/P2Rank disponibles,
-et écrit `data/processed/davis/pairs.csv` et `provenance.json`.
-Une source locale existante est conservée : son commit réel est enregistré.
+Sur une machine CUDA 12.1 avec pilote compatible, installer PyTorch depuis
+`https://download.pytorch.org/whl/cu121`, puis `requirements.txt` **sans** le
+verrou CPU. `device: auto` utilise CUDA si disponible, tandis que le simulateur
+quantique analytique reste CPU. La voie CUDA n'a pas été vérifiée ici.
+
+Dans l'environnement cloud courant, les dépendances existantes peuvent être
+activées avec `source /workspace/.venvs/proteine-legand/bin/activate`, puis
+`cd /workspace/Protein-Legand-Spase-Autoencoder`. Cette activation ne modifie
+pas l'ancien checkout. Pour créer un venv propre au nouveau projet :
+`bash scripts/setup_cloud.sh`, puis activer `/workspace/.venvs/protein-sae`.
+
+KIBA et BindingDB utilisent les commandes inchangées :
 
 ```bash
-python prepare_data.py --dataset davis --source /chemin/vers/PocketDTA
+python prepare_data.py --dataset kiba
+python prepare_embeddings.py --dataset kiba
+python prepare_data.py --dataset bindingdb
+python prepare_embeddings.py --dataset bindingdb
 ```
 
-Schéma commun :
+Les données, graphes, caches des embeddings, poids et résultats ne sont pas
+envoyés sur GitHub. Les scripts préparent des fichiers dans ce nouveau projet.
+Les révisions des modèles et des sources restent épinglées dans la config et
+les provenances. KIBA/BindingDB utilisent le fallback séquentiel quand aucune
+structure externe n'est fournie ; ce n'est pas une représentation 3D inventée.
 
-```text
-protein_id,ligand_id,sequence,smiles,affinity,graph_path
-```
-
-`graph_path` peut être vide, absolu ou relatif au CSV. Les IDs conservent la
-provenance ; les splits froids utilisent les séquences et SMILES pour contrôler
-les alias. Un graphe externe remplace l'adaptation PDB/P2Rank :
+## 5. Mode B : entraînement end-to-end
 
 ```bash
-python prepare_data.py --dataset davis --graph-map /chemin/graph_map.json
-# Ou une baseline volontairement séquentielle :
-python prepare_data.py --dataset davis --sequence-only
+# Baselines
+python train.py --dataset davis --projector mlp --model classical --split random
+python train.py --dataset davis --projector mlp --model quantum --split random
+
+# SAE L1 ; expliciter ce mode évite de charger un pré-entraînement déjà présent
+python train.py --dataset davis --projector sae --model classical --split random --no-pretrained
+python train.py --dataset davis --projector sae --model quantum --split random --no-pretrained
+
+# Contrôle Dense AE et Top-K
+python train.py --dataset davis --projector dense_ae --model quantum --split random --no-pretrained
+python train.py --dataset davis --projector sae --sparsity-mode topk --model quantum --split random --no-pretrained
 ```
 
-`graph_map.json` associe les `Target_ID` sources aux fichiers `.pt`/`.npz`.
-Ces fichiers contiennent uniquement des tenseurs/arrays : `coords` ou `pos`
-`[N,3]` en Å ; facultativement `residue_index [N]`, `node_s [N,S]`,
-`node_v [N,V,3]`, `edge_index [2,E]`, `edge_s [E,S_e]`, `edge_v [E,V_e,3]`.
-Les features optionnelles manquantes donnent des résumés nuls. Les données
-malformées ou les indices invalides déclenchent une erreur explicite, et ne
-sont pas cachés par un fallback. Le chargeur n'exécute pas de pickles arbitraires.
+`L_total = MSE_affinité + alpha*MSE_reconstruction + beta*L_sparsité`.
+Alpha et beta sont `sae.reconstruction_weight` et `sae.sparsity_weight`.
+La cible d'affinité est toujours standardisée sur le train seulement ; les
+métriques sont reconverties dans les unités originales. La sélection du meilleur
+checkpoint et l'early stopping utilisent uniquement la MSE d'affinité validation,
+comme dans la baseline, et non un mélange dépendant des coefficients SAE.
 
-Pour des objets TorchDrug prétraités déjà disponibles, exécuter dans leur
-**environnement PocketDTA original** (où TorchDrug est installé) :
+Un SAE peut devenir presque constant ou nul : une forte sparsité n'est pas un
+succès en soi. Surveiller reconstruction, variance, latents actifs et neurones
+morts. Les losses auxiliaires peuvent aussi modifier l'encodeur de patches en
+mode joint. `--freeze-patch-encoder` permet de fixer cette représentation dans
+**toutes** les ablations d'une étude ; l'appliquer à une seule variante changerait
+le protocole. Les choix initiaux et observations sont dans [VALIDATION.md](VALIDATION.md).
+
+## 6. Mode A : pré-entraînement
 
 ```bash
-python scripts/export_torchdrug.py \
-  --pickle /chemin/gearnet_pocket_Protein.pkl \
-  --index-map /chemin/protein_indices.json \
-  --output /chemin/tensor_graphs --trust-source
+python pretrain_sae.py --dataset davis --split random
+python train.py --dataset davis --projector sae --model classical --split random
+python train.py --dataset davis --projector sae --model quantum --split random
 ```
 
-`protein_indices.json` associe les IDs aux indices de la liste source.
-`graph_map.json` est généré dans le dossier de sortie. Le drapeau explicite
-est nécessaire car un pickle Python peut exécuter du code ; n'utiliser que
-vos fichiers source de confiance. Cet exporteur est fourni pour adaptation,
-mais n'a pas été testé avec les pickles natifs absents de la session.
-Ne pas déduire `residue_index` de la position d'un atome dans un objet TorchDrug.
+Si présent, le checkpoint compatible par défaut est découvert dans
+`runs/pretrain/davis/sae_l1/random/seed_0/best.pt`. Sinon, la CLI affiche le mode
+end-to-end. Pour un chemin personnalisé, utiliser `--sae-checkpoint` ou
+`sae.pretrained_checkpoint`. `--no-pretrained` force le mode B.
 
-## 6. Valider rapidement le pipeline
+`L_pretrain = MSE_reconstruction + lambda_sparse*L_sparsité`.
+`lambda_sparse` est indépendant de beta du mode joint. Pour Top-K ou Dense AE,
+la pénalité L1 est nulle.
 
-Tests indépendants du réseau et des données :
+La représentation des patches est déjà apprise par un module en amont. Par
+défaut, ce module conserve son initialisation seedée et reste figé pendant le
+pré-entraînement AE. Ce ne sont donc **pas des patches affinity-trained** par
+défaut. Pour réutiliser un encodeur de patches entraîné, fournir un checkpoint
+baseline issu du **même jeu de données, split et seed** :
+
+```bash
+python pretrain_sae.py --dataset davis --split random \
+  --patch-checkpoint runs/davis/mlp/quantum/random/seed_0/best.pt
+```
+
+Le fichier de pré-entraînement sauvegarde l'AE **et** l'encodeur de patches,
+plus les révisions et la provenance. La projection `latent → n_qubits` reste
+initialisée pour l'entraînement d'affinité ; elle n'appartient pas à l'objectif
+de reconstruction. Le chargement refuse une seed, un split, une table, un graphe,
+une architecture AE ou une représentation de patches différente.
+
+Seules les lignes du split d'affinité train sont exploitées. Elles sont
+dédoublonnées par séquence/graphe pour le pré-entraînement. Une validation
+interne par protéines est tirée **dans ce train**, sans utiliser les autres
+partitions. En random split, une protéine peut naturellement figurer dans
+plusieurs partitions d'affinité : le protocole n'est pas alors cold-protein.
+
+Gel ou fine-tuning :
+
+```bash
+# Geler AE et patches ; la projection vers les qubits, le scoreur et la tête restent entraînables
+python train.py --dataset davis --projector sae --model quantum --freeze-sae --freeze-patch-encoder
+# Fine-tuner AE et patches (valeurs par défaut)
+python train.py --dataset davis --projector sae --model quantum --no-freeze-sae --no-freeze-patch-encoder
+
+python pretrain_sae.py --dataset davis --sparsity-mode topk
+python train.py --dataset davis --projector sae --sparsity-mode topk --model quantum
+python pretrain_sae.py --dataset davis --projector dense_ae
+python train.py --dataset davis --projector dense_ae --model quantum
+```
+
+Pour une comparaison pré-entraînée contrôlée, la baseline peut charger le même
+encodeur de patches sans charger le SAE :
+
+```bash
+python train.py --dataset davis --projector mlp --model quantum --freeze-patch-encoder \
+  --patch-checkpoint runs/pretrain/davis/sae_l1/random/seed_0/best.pt
+```
+
+## 7. Résultats et latents
+
+Les expériences sont séparées par label `mlp`, `sae_l1`, `sae_topk`, `dense_ae` :
+`runs/<dataset>/<label>/<scorer>/<split>/seed_<n>/`. Un run existant n'est jamais
+écrasé ; `--output` choisit un nouveau dossier.
+
+Chaque run contient config, révisions, environnement, splits, meilleur
+checkpoint, historique, prédictions, métriques et, pour les AE,
+`latents_test.npz`. Ce NPZ contient `z [N_patches_valides,d_z]`, `row_id`,
+`patch_index` (rang du patch sélectionné dans la paire), `attention`,
+`protein_id`, `ligand_id` et le seuil d'activité. Pas de lignes de padding.
+Les statistiques sont pondérées par patch ; une protéine peut donc apparaître
+plusieurs fois lorsqu'elle est associée à plusieurs ligands.
+
+```bash
+python evaluate.py --checkpoint runs/davis/sae_l1/quantum/random/seed_0/best.pt \
+  --save-latents runs/davis/sae_l1/quantum/random/seed_0/latents_evaluated.npz
+python scripts/analyze_latents.py \
+  --input runs/davis/sae_l1/quantum/random/seed_0/latents_test.npz
+```
+
+Métriques d'affinité : RMSE, MAE, Pearson, Spearman, CI. Diagnostics AE :
+reconstruction MSE, pénalité sparse, fraction de zéros exacts, ratio sparse au
+seuil configurable, nombre moyen de latents actifs, norme L1 moyenne, variance
+par dimension puis moyenne, ratio nominal K/d_z. L'analyse ajoute les neurones
+morts et un histogramme des activations (bornes/effectifs dans un JSON).
+
+Les temps d'entraînement incluent les epochs train/validation et sauvegardes,
+pas le chargement initial des modèles ni le pré-entraînement. Le temps
+d'inférence couvre une passe du loader, encodage/cache compris. Préparer les
+caches de tous les backbones gelés avant une comparaison de temps sérieuse.
+Les paramètres entraînables incluent le decoder dans les variantes AE ; les
+backbones gelés sont exclus. Les métriques indéfinies sont `null`.
+
+## 8. Ablations et plusieurs seeds
+
+Les cinq expériences de base, seeds 0 à 4, Davis random :
+
+```bash
+python scripts/run_experiments.py --datasets davis --splits random --seeds 0 1 2 3 4
+```
+
+Ajouter Top-K et tous les jeux/splits, après préparation des données :
+
+```bash
+python scripts/run_experiments.py --datasets davis kiba bindingdb \
+  --splits random cold_protein cold_ligand cold_both --seeds 0 1 2 3 4 --include-topk
+```
+
+Le protocole `--protocol pretrained` pré-entraîne chaque AE sur le train de
+chaque dataset/split/seed et fixe les patches de toutes les ablations. Leurs
+poids initiaux sont identiques. Il ne réutilise pas le SAE d'un random split
+dans Cold-Both. Les checkpoints produits par différents protocoles doivent
+être placés dans des racines de sortie distinctes via une config dédiée.
+
+```bash
+python scripts/run_experiments.py --datasets davis --splits random --seeds 0 1 2 3 4 \
+  --protocol pretrained --include-topk --dry-run
+# Enlever --dry-run pour exécuter réellement les commandes.
+python aggregate.py --root runs/davis/sae_l1/quantum/random
+python aggregate.py --root runs/davis/mlp/quantum/random
+# Variante simple end-to-end :
+bash scripts/run_seeds.sh davis quantum random sae l1
+bash scripts/run_seeds.sh davis quantum random sae topk
+```
+
+L'agrégation utilise l'écart-type d'échantillon `ddof=1` et indique les seeds
+indéfinies. Elle refuse de mélanger projecteurs, modes sparse, protocoles,
+gels, architectures, coefficients, budgets d'entraînement ou sources différentes.
+Une seule seed ne définit pas de std. Le dry-run ne fabrique aucun résultat.
+
+Les splits froids et le traitement des paires croisées restent ceux de la
+baseline ; Cold-Both exclut et compte les paires entre partitions. La variation
+entre seeds comprend celle des partitions et des initialisations. Les résultats
+complets sur les trois datasets et cinq seeds restent à produire.
+
+## 9. Validation courte, avant les benchmarks
 
 ```bash
 python -m pytest -q
 python scripts/smoke.py --model classical
 python scripts/smoke.py --model quantum
-```
+python scripts/smoke_sae.py --projector sae --model quantum
+python scripts/smoke_sae.py --projector sae --sparsity-mode topk --model quantum
+python scripts/smoke_sae.py --projector dense_ae --model quantum
 
-Les tests d'encodeurs utilisent de vrais petits modèles Transformers locaux
-initialisés aléatoirement, uniquement pour vérifier chunks, cache, gel et
-gradients. Les scripts smoke utilisent des embeddings synthétiques et vérifient
-la diminution de MSE, les gradients, le softmax et la restauration des poids.
-Ils ne mesurent aucune performance d'affinité.
-
-Puis un test réel très court avec ESM/ChemBERTa préentraînés et pockets Davis :
-
-```bash
 python scripts/make_davis_smoke.py
-python train.py --dataset davis --model classical --split random --config data/smoke/config.yaml
-python train.py --dataset davis --model quantum --split random --config data/smoke/config.yaml
-python train.py --dataset davis --model classical --split cold_both --config data/smoke/config.yaml
-python train.py --dataset davis --model quantum --split cold_both --config data/smoke/config.yaml
-python evaluate.py --checkpoint runs/davis_smoke/davis/classical/random/seed_0/best.pt
-python evaluate.py --checkpoint runs/davis_smoke/davis/quantum/random/seed_0/best.pt
+python scripts/run_experiments.py --config data/smoke/config.yaml \
+  --datasets davis --splits random --seeds 0 1 --epochs 2 --include-topk
+python pretrain_sae.py --config data/smoke/config.yaml --dataset davis --epochs 3
+python train.py --config data/smoke/config.yaml --dataset davis --projector sae \
+  --model quantum --freeze-sae --output runs/pretrained_smoke
 ```
 
-Ce sous-ensemble contient 96 paires sélectionnées pour leur petite taille, donc
-est biaisé. Le test Cold-Both n'a que 2 exemples dans chacune des partitions
-validation et test. **Ses métriques ne sont pas un résultat de benchmark.**
-Un dossier d'expérience existant n'est pas écrasé : choisir `--output` pour une
-nouvelle exécution. Le script de préparation du smoke peut être relancé, mais
-ne pas modifier ses données pendant une expérience active.
-
-## 7. Expériences complètes
-
-Une fois le cache complet préparé, les commandes demandées sont :
-
-```bash
-python train.py --dataset davis --model classical --split random
-python train.py --dataset davis --model quantum --split random
-python train.py --dataset davis --model classical --split cold_both
-python train.py --dataset davis --model quantum --split cold_both
-```
-
-Autres partitions : `--split cold_protein`, `--split cold_ligand`.
-Le split random répartit les paires uniques. Les splits froids répartissent
-les entités ; les proportions de lignes peuvent donc différer des proportions
-configurées. Cold-Both ne conserve que les paires où les deux entités sont dans
-la même partition : les paires croisées sont exclues et leur nombre affiché.
-Aucun réessai silencieux de seed n'est effectué si une partition est vide.
-
-L'entraînement emploie MSE, AdamW, clipping, un scheduler optionnel et early
-stopping sur la validation. La cible est standardisée avec moyenne/std du
-**train uniquement** puis reconvertie pour toutes les métriques.
-Le test est évalué après sélection du checkpoint par validation.
-
-Chaque run conserve : `best.pt`, `config.yaml`, `environment.txt`, `splits.json`,
-`history.csv`, `metrics.json`, `predictions.csv`. Les commits des backbones sont
-épinglés dans le checkpoint et la config du run. Les poids gelés ne sont pas
-dupliqués ; ils sont restaurés depuis le cache Hugging Face ou le commit exact.
-Les poids dégelés sont inclus et peuvent rendre le checkpoint volumineux.
-
-```bash
-python evaluate.py --checkpoint runs/davis/classical/random/seed_0/best.pt
-python evaluate.py --checkpoint runs/davis/quantum/cold_both/seed_0/best.pt
-python evaluate.py --checkpoint runs/davis/classical/random/seed_0/best.pt --partition val
-```
-
-L'évaluation réutilise les indices sauvegardés et vérifie l'empreinte de la table
-et des graphes. `--data` accepte le même CSV à un autre emplacement ; les chemins
-de graphes doivent rester accessibles. Aucune statistique n'est ajustée sur le test.
-Les corrélations/CI indéfinis sont écrits `null`, pas remplacés par zéro.
-Le CI exact est calculé en `O(N log N)`, exclut les égalités de labels et compte
-les égalités de prédictions comme 0.5 ; il ne traite pas de censure.
-
-## 8. KIBA, BindingDB et plusieurs seeds
-
-```bash
-python prepare_data.py --dataset kiba
-python prepare_embeddings.py --dataset kiba
-python train.py --dataset kiba --model classical --split random
-python train.py --dataset kiba --model quantum --split cold_both
-
-python prepare_data.py --dataset bindingdb
-python prepare_embeddings.py --dataset bindingdb
-python train.py --dataset bindingdb --model classical --split random
-python train.py --dataset bindingdb --model quantum --split cold_protein
-```
-
-KIBA n'a pas de `pdb.zip` dans le commit PocketDTA inspecté : le fallback
-séquentiel est utilisé sauf fourniture de graphes/PDB externes via `--graph-map`.
-BindingDB BALM n'apporte pas de structures dans la table source : même fallback.
-Le commit HF du benchmark réellement téléchargé est enregistré en provenance.
-Les CSV upstream locaux peuvent être utilisés avec `--input`. Pour d'autres
-noms de colonnes, fournir `--columns mapping.json`, par exemple :
-
-```json
-{"protein_id":"Target_ID","ligand_id":"Drug_ID","sequence":"Target","smiles":"Drug","affinity":"Y"}
-```
-
-Seeds 0 à 4 :
-
-```bash
-bash scripts/run_seeds.sh davis classical random
-bash scripts/run_seeds.sh davis quantum random
-bash scripts/run_seeds.sh davis classical cold_both
-bash scripts/run_seeds.sh davis quantum cold_both
-# Ou des lancements individuels :
-python train.py --dataset davis --model classical --split random --seed 1
-python aggregate.py --root runs/davis/classical/random
-```
-
-L'agrégation écrit `summary.json`, avec moyenne et écart-type d'échantillon
-`ddof=1`, nombre de seeds valides/indéfinies par métrique. Une seule seed ne
-définit pas d'écart-type. Cette variation inclut le split et l'initialisation,
-car la seed contrôle les deux. Python, NumPy, PyTorch et CUDA sont seedés ; les
-mesures quantiques analytiques n'utilisent pas de shots aléatoires. La
-reproductibilité bit à bit entre versions matérielles différentes n'est pas garantie.
-
-## 9. Modifier le modèle puis ajouter un SAE plus tard
-
-`config.yaml` contrôle backbones, gel, cache, dimensions, K, qubits, nombre de
-couches, encodage des angles, dropout, batch size, scheduler et patience.
-Pour un ESM-2 plus grand, modifier `encoders.protein.model` et choisir une
-`revision` de ce nouveau modèle (ou `main` pour résoudre son commit) ; la dimension
-d'entrée est lue depuis le modèle. Pour un test court : `--epochs 2`.
-Pour le dégel, mettre `freeze: false` dans la config correspondante : son cache
-est automatiquement désactivé et le backbone rejoint AdamW. L'encodage en
-ligne par molécule est simple mais plus coûteux qu'un batching spécialisé.
-
-`AffinityModel.projection` est le point d'extension prévu : son contrat est
-`[B,P,patch_dim] → [B,P,n_qubits]`. La sélection, le scoring, le softmax et la
-tête restent indépendants de ce module. Aucun SAE n'est implémenté ici. L'ajout
-futur d'un SAE demandera aussi un objectif de reconstruction/parcimonie et
-une politique d'entraînement explicites ; ne pas l'ajouter silencieusement à MSE.
-
-Les shapes sont affichées au premier forward de chaque modèle : embeddings
-résidu/ligand, patches, projection, sorties du scoreur/circuit, scores, attention,
-pooling, fusion, prédiction. Les assertions et contrôles vérifient les dimensions,
-les alignements et les valeurs finies.
-
-## 10. Environnement cloud
-
-Les tâches cloud sont déjà isolées : travailler dans le checkout existant,
-sans créer de worktree supplémentaire. Après restauration d'une tâche, activer
-le venv et lancer les tests ; aucun service persistant n'est requis.
-Le brouillon d'environnement contient les instructions d'installation/activation
-et les domaines nécessaires à Hugging Face. Sa sauvegarde ne publie pas
-l'environnement : revoir, enregistrer puis publier dans les paramètres.
-
-Voir [VALIDATION.md](VALIDATION.md) pour distinguer les tests réellement exécutés
-des expériences complètes encore à lancer.
+Le sous-ensemble smoke contient 96 paires Davis choisies pour leur petite taille :
+ces métriques sont **des vérifications de fonctionnement, pas un benchmark**.
+Voir [VALIDATION.md](VALIDATION.md) pour les vérifications réellement réalisées,
+les observations de collapse et les opérations non exécutées.
